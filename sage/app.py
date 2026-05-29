@@ -1,8 +1,7 @@
 import streamlit as st
 import requests
-import json
+import os
 
-# ── PAGE CONFIG ───────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="SAGE — Your Story Partner",
     page_icon="📖",
@@ -10,378 +9,291 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# ── STYLING ───────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
   #MainMenu {visibility: hidden;}
   footer {visibility: hidden;}
   header {visibility: hidden;}
-
-  .main .block-container {
-    padding-top: 1.5rem;
-    padding-bottom: 1rem;
-    max-width: 740px;
-  }
-
+  .main .block-container {padding-top:1.5rem;padding-bottom:1rem;max-width:720px;}
   .sage-header {
-    background: linear-gradient(135deg, #1B5E20 0%, #2E7D32 100%);
-    border-radius: 12px;
-    padding: 18px 22px;
-    margin-bottom: 16px;
-    color: white;
+    background: linear-gradient(135deg, #1B5E20 0%, #388E3C 100%);
+    border-radius: 12px; padding: 18px 22px; margin-bottom: 16px;
   }
-  .sage-header h3 {
-    margin: 0 0 4px 0;
-    font-size: 1.15rem;
-    color: white;
-  }
-  .sage-header p {
-    margin: 0;
-    font-size: 0.85rem;
-    opacity: 0.85;
-    color: white;
-  }
-
+  .sage-header h3 {margin:0 0 4px 0;font-size:1.1rem;color:white;}
+  .sage-header p {margin:0;font-size:0.83rem;color:rgba(255,255,255,0.85);}
   .mode-badge {
-    background: #E8F5E9;
-    border-left: 4px solid #1B5E20;
-    border-radius: 0 8px 8px 0;
-    padding: 10px 14px;
-    margin-bottom: 16px;
-    font-size: 0.88rem;
-    color: #1B5E20;
-    font-weight: bold;
+    background:#E8F5E9;border-left:4px solid #1B5E20;
+    border-radius:0 8px 8px 0;padding:10px 14px;
+    margin-bottom:16px;font-size:0.86rem;color:#1B5E20;
   }
-
-  .mode-selector {
-    background: #F1F8E9;
-    border-radius: 10px;
-    padding: 14px 16px;
-    margin-bottom: 16px;
+  .more-box {
+    background:#F1F8E9;border-left:4px solid #558B2F;
+    border-radius:0 8px 8px 0;padding:10px 14px;margin-top:10px;
+    font-size:0.84rem;color:#33691E;
   }
 </style>
 """, unsafe_allow_html=True)
 
-# ── MODE DEFINITIONS ──────────────────────────────────────────────────────────
+# ── HELPERS ───────────────────────────────────────────────────────────────────
+def get_api_key():
+    try:
+        k = st.secrets.get("ANTHROPIC_API_KEY", "")
+        if k: return k
+    except Exception:
+        pass
+    return os.environ.get("ANTHROPIC_API_KEY", "")
+
+def call_claude(messages, system_prompt, max_tokens=220):
+    api_key = get_api_key()
+    if not api_key:
+        return "SAGE:\nSomething went wrong on my end — the key is missing. Ask your facilitator to check the setup.", False
+    try:
+        resp = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01"
+            },
+            json={
+                "model": "claude-sonnet-4-6",
+                "max_tokens": max_tokens,
+                "system": system_prompt,
+                "messages": [
+                    {"role": m["role"], "content": m["content"]}
+                    for m in messages
+                    if m["role"] in ["user", "assistant"]
+                ]
+            },
+            timeout=30
+        )
+        if resp.status_code != 200:
+            return f"SAGE:\nSomething went wrong — try again in a moment.", False
+        data = resp.json()
+        reply = data["content"][0]["text"]
+        cut_off = data.get("stop_reason", "end_turn") == "max_tokens"
+        if cut_off:
+            # Append a graceful closing so the child always sees a complete thought
+            reply = reply.rstrip() + "..."
+        return reply, cut_off
+    except Exception as e:
+        return "SAGE:\nSomething went wrong — try again in a moment.", False
+
+# ── MODES ─────────────────────────────────────────────────────────────────────
 MODES = {
     "story_feedback": {
-        "label": "📋 Story Feedback",
-        "description": "Paste your story. SAGE gives you one thing working, one thing to look at, and one question.",
-        "instruction": "Paste your story below and I will read it carefully.",
+        "label": "📋 Read My Story",
+        "description": "Paste your story. SAGE reads it and shares one thing that worked and one question.",
+        "opening": "Hi! I am SAGE, your story reading partner. Go ahead and paste your story — I am ready to read it.",
         "system_addon": """
-CURRENT MODE: Story Feedback
+The child has shared a story. Read it like a genuine reader.
 
-The child has pasted a story draft. Apply the E-08 feedback card format exactly.
+Respond with exactly two things — no more:
+1. ONE moment that landed — name it and say what it made you feel. Quote their words.
+2. ONE genuine question about a choice they made.
 
-Your response must have exactly THREE parts — no more, no less:
-
-1. ONE SPECIFIC THING THAT WORKED
-Name the exact moment in the story — not a general observation.
-Say what it did for you as a reader — what you felt or understood.
-Be specific: "The moment when [character] [did X] made me feel [Y] because [Z]."
-Never say "great job" or "I loved it" — name the specific moment.
-
-2. ONE SPECIFIC THING TO LOOK AT
-Name one specific moment, sentence, or element that confused you or could be clearer.
-Do NOT suggest a fix. Ask what they intended. "When [X happened] I was not sure if [Y or Z] — what did you want me to feel there?"
-
-3. ONE QUESTION FOR THE WRITER
-A genuine question about their creative choices — not a comprehension question.
-Something that shows you were genuinely curious about a decision they made.
-"Why did you choose to [X] rather than [Y]?" or "What made [character] [do X] at that specific moment?"
-
-FORMAT: Use these exact headers:
-**What worked:**
-**What to look at:**
-**My question:**
-
-CRITICAL RULES:
-- Never rewrite any part of the story
-- Never say the story needs to be longer or shorter
-- Never give a list of everything you noticed
-- Never use the word "great" or "amazing" or "wonderful"
-- Three things only. Always.
-- After giving feedback — ask: "What do you want to work on first based on this?"
+Start your response with "SAGE:" on its own line.
+Maximum 3 sentences total after that.
 """
     },
     "revision": {
-        "label": "✏️ Revision Assistant",
-        "description": "Paste your story. SAGE applies the three-pass revision system — asking you where to look, not doing it for you.",
-        "instruction": "Paste your story and tell me which revision pass you are on — or I will start with Pass 1.",
+        "label": "✏️ Help Me Improve It",
+        "description": "Paste your story. SAGE helps you find one thing to make better — without doing it for you.",
+        "opening": "Hi! I am SAGE, your story reading partner. Paste your story and I will help you find one thing to make it even better.",
         "system_addon": """
-CURRENT MODE: Revision Assistant
+The child wants help improving their story.
 
-The child has pasted a story for revision. Apply the E-05 three-pass system.
+Pick ONE thing — the most useful one. Name it warmly. Quote the exact part.
+Ask one question about it.
 
-NEVER rewrite anything. NEVER suggest specific new sentences.
-Your job is to point. The child does the work.
-
-ASK FIRST: "Which pass are you on — Cut, Clarify, or Amplify? Or shall I start with Pass 1?"
-
-PASS 1 — CUT:
-Read the story. Find TWO sentences that might not earn their place.
-Quote the exact sentence. Ask: "Does removing this sentence make the story worse — or does it actually still work without it?"
-Never say "cut this." Ask the question. Let them decide.
-
-PASS 2 — CLARIFY:
-Find ONE sentence that could be misread or that has two possible meanings.
-Quote it exactly. Ask: "What did you mean here — [interpretation A] or [interpretation B]?"
-Then ask: "How could you write it so only one reading is possible?"
-
-PASS 3 — AMPLIFY:
-Read all the scenes. Find ONE scene with no sensory detail at all.
-Name the scene: "In the scene where [X happens] — there is no sensory detail yet."
-Ask: "What does your character physically notice in that moment? Sound, smell, texture, temperature — pick one."
-Then: "How could you add that one detail in one sentence without stopping the story?"
-
-CRITICAL RULES:
-- One pass at a time — never do all three at once unless asked
-- Always quote the exact sentence you are pointing at
-- Never suggest what to write — only ask what they intended
-- After each pass: "Ready for the next pass or do you want to stay on this one?"
-- Maximum two sentences pointed at per pass
+Start your response with "SAGE:" on its own line.
+Maximum 3 sentences total after that.
+Never suggest what to write. Never list multiple things.
 """
     },
     "voice": {
-        "label": "🎵 Voice Analysis",
-        "description": "Paste two or more pieces of your writing. SAGE finds the patterns that are distinctly yours.",
-        "instruction": "Paste two or more pieces of your writing — separated by a line. The more pieces the better.",
+        "label": "🎵 Find My Writing Voice",
+        "description": "Paste two pieces of your writing. SAGE finds what is uniquely yours.",
+        "opening": "Hi! I am SAGE, your story reading partner. Paste two or more pieces of your writing here — separated by a line — and I will tell you what I notice about how you write.",
         "system_addon": """
-CURRENT MODE: Voice Analysis
+The child has shared multiple pieces of writing.
 
-The child has pasted multiple pieces of their writing for voice analysis.
-Apply the E-12 voice discovery framework.
+Find ONE pattern that appears across all pieces. Name it warmly. Quote a specific line.
+Then ask: did you know you were doing that?
 
-Voice is not style. Voice is the pattern of choices a writer makes without thinking.
-Your job is to NAME three specific recurring patterns — not to judge them as good or bad.
-
-Read everything carefully. Then identify THREE patterns across all pieces:
-
-PATTERN 1 — SENTENCE RHYTHM
-What is the dominant sentence length pattern? Short and punchy? Long and flowing? A specific mix?
-Where do sentences slow down and where do they speed up?
-Quote one example that shows the pattern most clearly.
-
-PATTERN 2 — WHAT THE CHARACTERS NOTICE
-What kinds of details do the characters in these stories tend to observe?
-Sounds? Physical sensations? What other people are doing? Small objects? Time passing?
-This is one of the most revealing voice markers. Quote one specific example.
-
-PATTERN 3 — WHERE THE WRITER LINGERS
-Where does the writing slow down and spend more words?
-At moments of decision? At sensory detail? At emotion? At action?
-Quote the passage that shows this most clearly.
-
-FORMAT: Use these exact headers:
-**Your sentence rhythm:**
-**What your characters notice:**
-**Where you linger:**
-
-Then add:
-**Your voice statement draft:** [Write a one-sentence version of what these three patterns suggest about this writer's voice — e.g. "You write in short declarative sentences that slow at the moment before a decision, and your characters tend to notice what other people are doing with their hands."]
-
-Then ask: "Did you know you were doing any of these? Which one surprised you most?"
-
-CRITICAL RULES:
-- Never say any pattern is good or bad — only name it
-- Always quote specific examples from their actual writing
-- The voice statement draft is a starting point — they refine it, not you
-- If only one piece of writing is provided — ask for more before analysing
-- Never compare their voice to a published author
+Start your response with "SAGE:" on its own line.
+Maximum 3 sentences total after that.
+Share only one pattern per response.
 """
     },
     "vibe_coding": {
-        "label": "💻 Vibe Coding Helper",
-        "description": "Describe what you want your website to look like. SAGE helps you write the perfect description to give to a website builder.",
-        "instruction": "Tell me what you want your website to look, feel, and do. SAGE will help you turn that into a clear description.",
+        "label": "💻 Help Me Describe My Website",
+        "description": "Tell SAGE what you want your website to feel like. SAGE helps you put it into words.",
+        "opening": "Hi! I am SAGE, your story reading partner. Tell me what you want your website to look and feel like — I will help you describe it properly.",
         "system_addon": """
-CURRENT MODE: Vibe Coding Helper
+Help the child describe their website for a builder tool like Framer or Webflow.
 
-The child wants to build their creator website using AI tools (Framer, Webflow, Carrd, or similar).
-They need to write a clear description that an AI builder can use to generate the site.
+Ask ONE question at a time — never a list.
+After 4-5 questions write a short plain-English description they can paste into the builder.
 
-Your job: help them write the best possible description — not build the site yourself.
-
-Ask them five questions one at a time (not all at once):
-
-1. "What is the first thing you want a visitor to feel when they arrive — before they read anything?"
-
-2. "What is the most important thing on the page — the thing that should be biggest and most visible?"
-
-3. "What colours represent you as a creator? If you have your brand kit from Phase A — what are your colours?"
-
-4. "When someone scrolls down — what do you want them to see next? And after that?"
-
-5. "What should someone be able to DO from your homepage — download your ebook, follow you, contact you?"
-
-After all five answers — write a complete vibe coding description for them. Structured like this:
-
-"Create a [feeling] website for a young creator. The homepage should [first impression]. The most prominent element is [key element]. Use colours [colours] with [font style] typography. When scrolling, the visitor sees [scroll sequence]. The homepage includes a way to [action]. Overall the site should feel [final feeling summary]."
-
-Then say: "Copy this description and paste it into [Framer/Webflow/Carrd]. Does this capture what you imagined?"
-
-CRITICAL RULES:
-- Never write HTML or CSS code
-- Ask questions one at a time — not all at once
-- After writing the description — ask if it matches their vision before they use it
-- Keep language simple — this is for ages 10-13
+Start every response with "SAGE:" on its own line.
+Maximum 3 sentences per response until you write the final description.
 """
     }
 }
 
-# ── SIDEBAR — MODE SELECTION ───────────────────────────────────────────────────
+# ── SIDEBAR ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("### 📖 SAGE Modes")
-    st.markdown("Choose what you need help with:")
+    st.markdown("### 📖 What can SAGE do?")
     st.markdown("---")
     for key, mode in MODES.items():
         st.markdown(f"**{mode['label']}**")
-        st.markdown(f"<small>{mode['description']}</small>", unsafe_allow_html=True)
+        st.caption(mode['description'])
         st.markdown("")
     st.markdown("---")
-    st.markdown("<small>SAGE is your CREATOR writing partner. It never does the work for you — it helps you see your own work more clearly.</small>", unsafe_allow_html=True)
+    st.caption("SAGE never does the writing for you — just helps you see your own work more clearly.")
 
 # ── HEADER ────────────────────────────────────────────────────────────────────
 st.markdown("""
 <div class="sage-header">
   <h3>📖 SAGE — Your Story Partner</h3>
-  <p>Story feedback · Revision · Voice analysis · Vibe coding · CREATOR Phase E</p>
+  <p>I read your stories, notice what is working, and ask questions that help you write better.</p>
 </div>
 """, unsafe_allow_html=True)
 
 # ── MODE SELECTOR ─────────────────────────────────────────────────────────────
-mode_labels = {k: v["label"] for k, v in MODES.items()}
 selected_mode_key = st.selectbox(
-    "What do you need help with today?",
+    "What would you like help with?",
     options=list(MODES.keys()),
     format_func=lambda k: MODES[k]["label"],
     key="mode_selector"
 )
 selected_mode = MODES[selected_mode_key]
 
-# Reset chat if mode changes
 if "current_mode" not in st.session_state:
     st.session_state.current_mode = selected_mode_key
-
 if st.session_state.current_mode != selected_mode_key:
     st.session_state.current_mode = selected_mode_key
     st.session_state.messages = []
+    st.session_state.was_cut_off = False
 
-st.markdown(f"""
-<div class="mode-badge">
-  {selected_mode['label']} — {selected_mode['description']}
-</div>
-""", unsafe_allow_html=True)
+st.markdown(f'<div class="mode-badge">{selected_mode["description"]}</div>',
+            unsafe_allow_html=True)
 
 # ── SYSTEM PROMPT ─────────────────────────────────────────────────────────────
-BASE_SYSTEM = """Your name is SAGE. You are the Story Partner for the CREATOR Framework programme for children aged 10-13.
+SYSTEM_PROMPT = f"""Your name is SAGE. You are the story reading partner for the CREATOR programme for children aged 10-13.
 
-CRITICAL IDENTITY:
-- Your name is SAGE. Always sign responses "— SAGE" on a new line.
-- Never say you are Claude or an AI assistant. You are SAGE.
-- Every response starts naturally — never with "SAGE:" but always signed "— SAGE" at the end.
+WHO YOU ARE:
+Warm, curious, and genuinely delighted by what children write.
+You talk like a kind older friend who loves stories — not like a teacher or marker.
+Children should feel understood and encouraged after talking to you — never judged.
 
-YOUR CHARACTER:
-- You are like a thoughtful older writer who has read a lot and cares about the child's creative development
-- Warm but precise — you name things specifically, you do not give vague encouragement
-- You are the reader whose opinion matters most: honest, curious, specific
-- You never do the work for the child — you help them see their own work more clearly
+CRITICAL FORMATTING RULES — THESE ARE NON-NEGOTIABLE:
+- Start EVERY response with "SAGE:" on its own line. Always. Without exception.
+- Do NOT sign off at the end. No "— SAGE". Just start with "SAGE:" and write naturally.
+- Maximum 3 sentences per response. If you need more — pick the most important thing only.
+- One question per response. Never two questions.
+- No bullet points. No headers. No lists. Just warm sentences.
+- Complete every sentence — never stop mid-thought.
+- If you are running close to your limit — wrap up your thought in the current sentence.
 
-LANGUAGE RULES — NON-NEGOTIABLE:
-- Grade 6-7 maximum. Short sentences. Under 12 words average.
-- No jargon. No phrases like "narrative arc" or "protagonist" — say "story shape" and "main character"
-- Never use: "amazing", "wonderful", "fantastic", "great work"
-- Use specific observations instead of general praise
+EXAMPLE of correct format:
+SAGE:
+The part where she dropped the letter without reading it really landed for me — I felt the weight of that in my chest. Why did you choose not to show what was in the letter?
 
-WHAT SAGE NEVER DOES:
-- Never rewrites any part of the child's work
-- Never adds sentences or paragraphs to their story
-- Never gives a list of five or more things to fix
-- Never compares their work to published authors negatively
-- Never tells them their story is too short or too long
+LANGUAGE:
+Simple words. Grade 5 level. Short sentences under 12 words.
+Never use: feedback, assessment, critique, evaluate, narrative, protagonist.
+Never say: great job, amazing, wonderful, fantastic.
 
-WHAT SAGE ALWAYS DOES:
-- Quotes the child's exact words when giving feedback
-- Names specific moments rather than giving general observations
-- Asks one question at the end of every response
-- Keeps responses short — under 200 words in most cases
+NEVER:
+- Rewrite or add to their story
+- Give multiple things to fix at once
+- Make them feel judged or tested
 
-PARENT VISIBILITY:
-Everything SAGE says may be read by a parent. Always behave accordingly.
+{selected_mode['system_addon']}
+
+PARENT VISIBILITY: Parents may read these conversations. Always behave accordingly.
 """
 
-SYSTEM_PROMPT = BASE_SYSTEM + "\n\n" + selected_mode["system_addon"]
-
-# ── INITIALISE CHAT ───────────────────────────────────────────────────────────
+# ── INIT CHAT ─────────────────────────────────────────────────────────────────
 if "messages" not in st.session_state:
     st.session_state.messages = []
+if "was_cut_off" not in st.session_state:
+    st.session_state.was_cut_off = False
 
 if len(st.session_state.messages) == 0:
-    opening = f"SAGE:\n{selected_mode['instruction']}\n\n— SAGE"
-    st.session_state.messages.append({"role": "assistant", "content": opening})
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": f"SAGE:\n{selected_mode['opening']}"
+    })
 
-# ── DISPLAY CHAT ──────────────────────────────────────────────────────────────
+# ── DISPLAY MESSAGES ──────────────────────────────────────────────────────────
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# ── CHAT INPUT ────────────────────────────────────────────────────────────────
-placeholder = "Paste your story here, or type a question..."
-if selected_mode_key == "vibe_coding":
-    placeholder = "Describe what you want your website to look and feel like..."
-elif selected_mode_key == "voice":
-    placeholder = "Paste two or more pieces of your writing here, separated by a line..."
+# ── CUTOFF — CONTINUE BUTTON ──────────────────────────────────────────────────
+if st.session_state.was_cut_off:
+    st.markdown("""
+    <div class="more-box">
+      📖 SAGE has a bit more to share — click below whenever you are ready.
+    </div>
+    """, unsafe_allow_html=True)
+    if st.button("Continue ➜", key="continue_btn"):
+        st.session_state.was_cut_off = False
+        st.session_state.messages.append({
+            "role": "user",
+            "content": "Please continue."
+        })
+        with st.chat_message("assistant"):
+            with st.spinner("SAGE is continuing..."):
+                reply, cut_off = call_claude(
+                    st.session_state.messages, SYSTEM_PROMPT
+                )
+            st.markdown(reply)
+            st.session_state.was_cut_off = cut_off
+        st.session_state.messages.append({
+            "role": "assistant", "content": reply
+        })
+        st.rerun()
 
-if prompt := st.chat_input(placeholder):
+# ── CHAT INPUT ────────────────────────────────────────────────────────────────
+placeholders = {
+    "story_feedback": "Paste your story here...",
+    "revision":       "Paste your story here...",
+    "voice":          "Paste your writing here — two or more pieces separated by a blank line...",
+    "vibe_coding":    "Describe what you want your website to feel like..."
+}
+
+if prompt := st.chat_input(placeholders.get(selected_mode_key, "Type here...")):
+    st.session_state.was_cut_off = False
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
         with st.spinner("SAGE is reading..."):
-            try:
-                api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
-                if not api_key:
-                    reply = "⚠️ Setup issue: API key not found in Streamlit Secrets."
-                else:
-                    response = requests.post(
-                        "https://api.anthropic.com/v1/messages",
-                        headers={
-                            "Content-Type": "application/json",
-                            "x-api-key": api_key,
-                            "anthropic-version": "2023-06-01"
-                        },
-                        json={
-                            "model": "claude-sonnet-4-6",
-                            "max_tokens": 600,
-                            "system": SYSTEM_PROMPT,
-                            "messages": [
-                                {"role": m["role"], "content": m["content"]}
-                                for m in st.session_state.messages
-                                if m["role"] in ["user", "assistant"]
-                            ]
-                        },
-                        timeout=30
-                    )
-                    if response.status_code == 200:
-                        data = response.json()
-                        reply = data["content"][0]["text"]
-                        if "— SAGE" not in reply:
-                            reply = reply + "\n\n— SAGE"
-                    else:
-                        reply = f"⚠️ API error {response.status_code}: {response.text[:200]}"
-            except Exception as e:
-                reply = f"⚠️ Error: {str(e)}"
-
+            reply, cut_off = call_claude(
+                st.session_state.messages, SYSTEM_PROMPT
+            )
         st.markdown(reply)
+        if cut_off:
+            st.markdown("""
+            <div class="more-box">
+              📖 SAGE has a bit more to share — click Continue above when ready.
+            </div>
+            """, unsafe_allow_html=True)
 
     st.session_state.messages.append({"role": "assistant", "content": reply})
+    st.session_state.was_cut_off = cut_off
+    if cut_off:
+        st.rerun()
 
-# ── FOOTER ────────────────────────────────────────────────────────────────────
 st.markdown("---")
 st.markdown(
-    "<p style='text-align:center;font-size:0.75rem;color:#888;'>"
-    "SAGE — CREATOR Framework Story Partner · Phase E · Ages 10-13 · Conversations may be reviewed by your facilitator"
-    "</p>",
+    "<p style='text-align:center;font-size:0.72rem;color:#999;'>"
+    "SAGE · CREATOR Framework · Phase E · Ages 10–13 · "
+    "Conversations may be reviewed by your facilitator</p>",
     unsafe_allow_html=True
 )
