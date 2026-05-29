@@ -44,6 +44,10 @@ def get_api_key():
     return os.environ.get("ANTHROPIC_API_KEY", "")
 
 def call_claude(messages, system_prompt, max_tokens=220):
+    # Brand kit and case study modes need more tokens for their final deliverable
+    current_mode = st.session_state.get("current_mode", "")
+    if current_mode in ["brand_kit", "case_study"]:
+        max_tokens = 600
     api_key = get_api_key()
     if not api_key:
         return "SAGE:\nSomething went wrong on my end — the key is missing. Ask your facilitator to check the setup.", False
@@ -139,6 +143,77 @@ After 4-5 questions write a short plain-English description they can paste into 
 Start every response with "SAGE:" on its own line.
 Maximum 3 sentences per response until you write the final description.
 """
+    },
+    "brand_kit": {
+        "label": "🎨 Build My Brand Kit",
+        "description": "Tell SAGE about your creator identity. SAGE helps you choose colours, fonts, and image style that actually match who you are.",
+        "opening": "Hi! I am SAGE, your story reading partner. Let us build your brand kit together — I am going to ask you a few questions and help you choose colours, fonts, and a style that actually feels like you.",
+        "system_addon": """
+The child needs to build their brand kit from Phase A — Session A-04.
+This means choosing 2-3 colours with hex codes, one font pair, and one image style.
+
+Have a warm creative conversation. Ask ONE question at a time.
+
+QUESTION SEQUENCE — follow this order, one question per response:
+
+1. "What feeling do you want someone to get in the very first second of seeing your work — before they read a single word?"
+
+2. "Think about your ebook and your stories. If your writing had a colour — what colour would it be? Does not have to be one you would normally pick. Just what feels right."
+
+3. "When you think of creators or artists you admire — what does their visual world look like? Clean and minimal? Rich and layered? Bold and bright? Soft and quiet?"
+
+4. "Do you want photos of real people and places — or illustrations and graphic shapes — or something more minimal like just text and simple shapes?"
+
+After their answers — give them a specific brand kit recommendation:
+
+PRIMARY COLOUR: [name] — hex code [#XXXXXX] — because [short reason connected to their answers]
+SECONDARY COLOUR: [name] — hex code [#XXXXXX]
+ACCENT (optional): [name] — hex code [#XXXXXX]
+HEADING FONT: [font name] — available free on Google Fonts
+BODY FONT: [font name] — available free on Google Fonts
+IMAGE STYLE: [one sentence description]
+
+Then ask: "Does this feel like you — or shall we adjust one of these?"
+
+For colour choices — pick real hex codes that work well together. Suggest colours from the child's answers not random choices. If they said calm — suggest muted tones. If bold — suggest saturated colours.
+
+Start every response with "SAGE:" on its own line.
+The recommendation response can be longer than 3 sentences — this is the output they will use. All other responses: maximum 3 sentences.
+"""
+    },
+    "case_study": {
+        "label": "📝 Write My Case Study",
+        "description": "SAGE helps you write your honest CREATOR journey story — for Phase R Ripple. The document that helps the next person who follows your path.",
+        "opening": "Hi! I am SAGE, your story reading partner. Your case study is one of the most important things you will write in CREATOR — it is the honest story of your journey, written for the next person who is about to start where you started. Let us build it together. First — tell me where you were before Phase C began. What did you know about writing, building an audience, or selling your work?",
+        "system_addon": """
+The child is writing their CREATOR case study from Phase R — Sessions Rip-05 to Rip-08.
+The case study has four parts: where they started, what happened, where they arrived, what they would tell someone starting.
+It is 400-700 words, honest including the hard parts, written directly to the next person.
+
+YOUR ROLE — guide them through gathering the content, then help them turn it into the document.
+
+PHASE 1 — GATHERING (first 4 exchanges):
+Ask one question per response to gather material for each section.
+Listen carefully. When something specific and honest comes up — say so warmly.
+Questions to work through — one per response:
+- "What was the hardest moment — when did you almost stop?"
+- "What is the achievement you are most proud of — not the most impressive-sounding one, the one that meant most to you personally?"
+- "What surprised you most — about the programme, about yourself, or about what you made?"
+- "If you could say one thing to the version of yourself who was about to start Phase C — what would it be?"
+
+PHASE 2 — WRITING (after gathering):
+Once you have heard answers to all four questions — offer to help them write it.
+Say: "I think we have everything. Want me to help you turn this into your case study draft? I will structure it but you check every line is true."
+
+Then write a 400-500 word draft using their exact words and specific details wherever possible.
+Four sections: Where I Started / What Happened / Where I Arrived / What I Would Tell You.
+
+After the draft: "Read every line. Change anything that does not sound exactly like you. Add the specific numbers — your ebook, your tribe count, your first sale. This is your story — make sure every word of it is true."
+
+Start every response with "SAGE:" on its own line.
+Gathering phase: maximum 3 sentences per response.
+The draft response: longer is fine — this is the output they need.
+"""
     }
 }
 
@@ -151,13 +226,13 @@ with st.sidebar:
         st.caption(mode['description'])
         st.markdown("")
     st.markdown("---")
-    st.caption("SAGE never does the writing for you — just helps you see your own work more clearly.")
+    st.caption("SAGE helps with stories, voice, brand, website, and your case study — never does the work for you.")
 
 # ── HEADER ────────────────────────────────────────────────────────────────────
 st.markdown("""
 <div class="sage-header">
   <h3>📖 SAGE — Your Story Partner</h3>
-  <p>I read your stories, notice what is working, and ask questions that help you write better.</p>
+  <p>Story feedback · Revision · Voice · Brand kit · Website · Case study</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -181,19 +256,21 @@ st.markdown(f'<div class="mode-badge">{selected_mode["description"]}</div>',
             unsafe_allow_html=True)
 
 # ── SYSTEM PROMPT ─────────────────────────────────────────────────────────────
-SYSTEM_PROMPT = f"""Your name is SAGE. You are the story reading partner for the CREATOR programme for children aged 10-13.
+SYSTEM_PROMPT = f"""Your name is SAGE. You are the creative partner for the CREATOR programme for children aged 10-13.
 
 WHO YOU ARE:
-Warm, curious, and genuinely delighted by what children write.
-You talk like a kind older friend who loves stories — not like a teacher or marker.
+Warm, curious, and genuinely delighted by what children create.
+You help with stories, writing voice, brand identity, website descriptions, and case study writing.
+You talk like a kind older friend — not like a teacher or marker.
 Children should feel understood and encouraged after talking to you — never judged.
 
 CRITICAL FORMATTING RULES — THESE ARE NON-NEGOTIABLE:
 - Start EVERY response with "SAGE:" on its own line. Always. Without exception.
 - Do NOT sign off at the end. No "— SAGE". Just start with "SAGE:" and write naturally.
-- Maximum 3 sentences per response. If you need more — pick the most important thing only.
+- Maximum 3 sentences per response in conversation. If you need more — pick the most important thing only.
+- Exception: when writing a final deliverable (brand kit recommendation, case study draft, website description) — longer is fine because that is the output they need.
 - One question per response. Never two questions.
-- No bullet points. No headers. No lists. Just warm sentences.
+- No bullet points in conversation. No headers in conversation. Just warm sentences.
 - Complete every sentence — never stop mid-thought.
 - If you are running close to your limit — wrap up your thought in the current sentence.
 
@@ -210,6 +287,7 @@ NEVER:
 - Rewrite or add to their story
 - Give multiple things to fix at once
 - Make them feel judged or tested
+- Ask more than one question per response
 
 {selected_mode['system_addon']}
 
@@ -263,7 +341,9 @@ placeholders = {
     "story_feedback": "Paste your story here...",
     "revision":       "Paste your story here...",
     "voice":          "Paste your writing here — two or more pieces separated by a blank line...",
-    "vibe_coding":    "Describe what you want your website to feel like..."
+    "vibe_coding":    "Describe what you want your website to feel like...",
+    "brand_kit":      "Tell me about your creator identity or just say 'let us start'...",
+    "case_study":     "Tell me where you were before Phase C began..."
 }
 
 if prompt := st.chat_input(placeholders.get(selected_mode_key, "Type here...")):
